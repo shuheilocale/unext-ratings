@@ -1,13 +1,30 @@
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+const ALLOWED_ORIGINS = [
+  "https://filmarks.com/",
+  "https://www.rottentomatoes.com/",
+];
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!sender.tab || !sender.url?.startsWith("https://video.unext.jp/")) {
+    return;
+  }
+
   if (message.type === "FETCH_ALL_SCORES") {
     (async () => {
-      const result = await fetchAllScores(message.title, message.year);
-      sendResponse(result);
+      try {
+        const result = await fetchAllScores(message.title, message.year);
+        sendResponse(result);
+      } catch (e) {
+        console.error("[Ratings] Unhandled error:", e);
+        sendResponse({ filmarks: { error: e.message } });
+      }
     })();
     return true;
   }
   if (message.type === "OPEN_TAB") {
-    chrome.tabs.create({ url: message.url });
+    const url = message.url;
+    if (url && ALLOWED_ORIGINS.some((origin) => url.startsWith(origin))) {
+      chrome.tabs.create({ url });
+    }
   }
 });
 
