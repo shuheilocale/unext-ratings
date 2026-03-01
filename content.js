@@ -275,9 +275,15 @@
         scoresHtml += `<span class="main-row"><span class="icon">🍿</span><span class="score rt-audience">${escapeHtml(rt.audienceScore)}%</span></span>`;
       }
 
+      let rtTitleHtml = "";
+      if (rt.title) {
+        rtTitleHtml = `<span class="match-title">${escapeHtml(rt.title)}</span>`;
+      }
+
       chip.innerHTML = `<div class="info">
         <span class="rt-logo">Rotten Tomatoes</span>
         <div class="rt-scores">${scoresHtml}</div>
+        ${rtTitleHtml}
       </div>`;
 
       chip.addEventListener("click", (e) => {

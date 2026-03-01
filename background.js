@@ -249,6 +249,13 @@ function parseRTPage(html, movieUrl) {
     return { error: "no_scores" };
   }
 
+  // Extract title from RT page
+  const titleMatch =
+    html.match(/<title>([^<]+)<\/title>/) ||
+    html.match(/"name"\s*:\s*"([^"]+)"/);
+  let title = titleMatch ? titleMatch[1].trim() : null;
+  if (title) title = title.replace(/\s*[-–|].*$/, ""); // strip suffix like " - Rotten Tomatoes"
+
   // Extract year from RT page (e.g. "releaseYear":"2000" or "Released Jan 20, 2000")
   const yearMatch =
     html.match(/"releaseYear"\s*:\s*"(\d{4})"/) ||
@@ -260,6 +267,7 @@ function parseRTPage(html, movieUrl) {
     criticsScore: criticsMatch ? criticsMatch[1] : null,
     audienceScore: audienceMatch ? audienceMatch[1] : null,
     url: movieUrl,
+    title,
     year: pageYear,
   };
 }
