@@ -1,21 +1,149 @@
 (() => {
-  console.log("[Filmarks] Content script loaded");
+  console.log("[Ratings] Content script loaded");
   let lastTitle = "";
-  let currentBadge = null;
+  let currentHost = null;
+
+  const BADGE_STYLES = `
+    :host {
+      display: block;
+      margin: 8px 0;
+      pointer-events: auto !important;
+    }
+    * {
+      pointer-events: auto !important;
+    }
+    .container {
+      display: inline-flex;
+      align-items: stretch;
+      gap: 0;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+    }
+    .container.loading {
+      padding: 4px 12px;
+    }
+    .loading-text {
+      font-size: 11px;
+      color: #8b95a5;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background 0.2s;
+      color: inherit;
+    }
+    .chip:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+    .chip + .chip {
+      border-left: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .thumb {
+      width: 28px;
+      height: 40px;
+      object-fit: cover;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+    .info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .main-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .score {
+      font-size: 16px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+    .star {
+      color: #f5c518;
+      font-size: 14px;
+    }
+    .icon {
+      font-size: 14px;
+    }
+    .match-title {
+      font-size: 11px;
+      color: #8b95a5;
+      max-width: 180px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .filmarks-logo {
+      font-weight: 700;
+      font-size: 11px;
+      color: #f5c518;
+      letter-spacing: 0.5px;
+    }
+    .rt-logo {
+      font-weight: 700;
+      font-size: 10px;
+      color: #FA320A;
+      letter-spacing: 0.3px;
+    }
+    .rt-scores {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .rt-critics { font-size: 15px; }
+    .rt-audience { font-size: 15px; color: #ccc; }
+  `;
 
   function getMovieTitleFromDocument() {
     const docTitle = document.title;
-    // "シド・アンド・ナンシー(洋画 / 1986) - 動画配信 | U-NEXT"
-    // Extract just the movie name before any parentheses, dash-separated metadata
     let cleaned = docTitle;
-    // Remove " | U-NEXT" or " - U-NEXT" suffix
     cleaned = cleaned.replace(/\s*[|\-–—]\s*U-NEXT.*$/, "");
-    // Remove " - 動画配信" etc.
     cleaned = cleaned.replace(/\s*[-–—]\s*動画配信.*$/, "");
-    // Remove "(洋画 / 1986)" etc.
     cleaned = cleaned.replace(/\s*[（(].*$/, "");
     cleaned = cleaned.trim();
     return cleaned.length >= 2 ? cleaned : null;
+  }
+
+  function getYearFromPage() {
+    // Strategy 1: document title often has （2016） or (2016)
+    const titleMatch = document.title.match(/[（(](\d{4})[）)]/);
+    if (titleMatch) {
+      const y = parseInt(titleMatch[1], 10);
+      if (y >= 1900 && y <= 2099) return y;
+    }
+
+    // Strategy 2: JSON-LD structured data
+    for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+      try {
+        const data = JSON.parse(script.textContent);
+        const dateStr = data.datePublished || data.dateCreated || data.releaseDate;
+        if (dateStr) {
+          const y = parseInt(dateStr.substring(0, 4), 10);
+          if (y >= 1900 && y <= 2099) return y;
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    // Strategy 3: U-NEXT pattern "2016年 | アメリカ" in short text elements
+    for (const el of document.querySelectorAll("div, span, p")) {
+      const text = el.textContent.trim();
+      if (text.length > 30) continue;
+      const m = text.match(/^(\d{4})年/);
+      if (m) {
+        const y = parseInt(m[1], 10);
+        if (y >= 1900 && y <= 2099) return y;
+      }
+    }
+
+    return null;
   }
 
   function findTitleElement(titleText) {
@@ -23,14 +151,12 @@
     const norm = (s) => s.replace(/[\s\u3000]+/g, "");
     const target = norm(titleText);
 
-    // 1. Try heading tags first (fast)
     for (const tag of ["h1", "h2", "h3", "h4"]) {
       for (const el of document.getElementsByTagName(tag)) {
         if (norm(el.textContent) === target) return el;
       }
     }
 
-    // 2. Find text nodes containing parts of the title, then walk up
     const walker = document.createTreeWalker(
       document.body,
       NodeFilter.SHOW_TEXT
@@ -49,20 +175,9 @@
   }
 
   function removeBadge() {
-    const existing = document.getElementById("filmarks-score-badge");
+    const existing = document.getElementById("unext-ratings-host");
     if (existing) existing.remove();
-    currentBadge = null;
-  }
-
-  function createBadge() {
-    const badge = document.createElement("div");
-    badge.id = "filmarks-score-badge";
-    badge.className = "loading";
-    badge.innerHTML = `
-      <span class="filmarks-logo">Filmarks</span>
-      <span class="filmarks-rating">読み込み中...</span>
-    `;
-    return badge;
+    currentHost = null;
   }
 
   function escapeHtml(str) {
@@ -73,52 +188,115 @@
       .replace(/"/g, "&quot;");
   }
 
-  function updateBadge(badge, data) {
-    if (!badge || !badge.isConnected) return;
-    badge.className = "";
-    if (data.error || !data.score) {
-      badge.innerHTML = `
-        <span class="filmarks-logo">Filmarks</span>
-        <span class="filmarks-rating" style="color:#8b95a5;font-size:12px;">スコアなし</span>
-      `;
+  function createBadge() {
+    const host = document.createElement("div");
+    host.id = "unext-ratings-host";
+    host.style.cssText = "pointer-events:auto !important;";
+    const shadow = host.attachShadow({ mode: "closed" });
+
+    const style = document.createElement("style");
+    style.textContent = BADGE_STYLES;
+    shadow.appendChild(style);
+
+    const container = document.createElement("div");
+    container.className = "container loading";
+    container.innerHTML = `<span class="loading-text">読み込み中...</span>`;
+    shadow.appendChild(container);
+
+    host._shadow = shadow;
+    host._container = container;
+    return host;
+  }
+
+  function updateBadge(host, data) {
+    if (!host || !host.isConnected) return;
+    const container = host._container;
+
+    const filmarks = data.filmarks;
+    const rt = data.rt;
+    const hasFilmarks = filmarks && !filmarks.error && filmarks.score;
+    const hasRT = rt && !rt.error && (rt.criticsScore || rt.audienceScore);
+
+    if (!hasFilmarks && !hasRT) {
+      container.className = "container";
+      container.innerHTML = `<span class="loading-text">スコアなし</span>`;
       return;
     }
 
-    const movieUrl = data.url || "https://filmarks.com";
-    const searchUrl = data.searchUrl || movieUrl;
-    const thumbHtml = data.thumbnail
-      ? `<img class="filmarks-thumb" src="${escapeHtml(data.thumbnail)}" alt="">`
-      : "";
-    const titleHtml = data.title
-      ? `<span class="filmarks-match-title">${escapeHtml(data.title)}</span>`
-      : "";
+    container.className = "container";
+    container.innerHTML = "";
 
-    badge.innerHTML = `
-      ${thumbHtml}
-      <div class="filmarks-info">
-        <a class="filmarks-main-link" href="${escapeHtml(movieUrl)}" target="_blank" rel="noopener noreferrer">
+    // Filmarks chip
+    if (hasFilmarks) {
+      const movieUrl = filmarks.url || "https://filmarks.com";
+      const chip = document.createElement("a");
+      chip.className = "chip";
+      chip.href = movieUrl;
+      chip.target = "_blank";
+      chip.rel = "noopener noreferrer";
+
+      let inner = "";
+      if (filmarks.thumbnail) {
+        inner += `<img class="thumb" src="${escapeHtml(filmarks.thumbnail)}" alt="">`;
+      }
+      inner += `<div class="info">
+        <div class="main-row">
           <span class="filmarks-logo">Filmarks</span>
-          <span class="filmarks-star">★</span>
-          <span class="filmarks-rating">${escapeHtml(data.score)}</span>
-        </a>
-        ${titleHtml}
-        <a class="filmarks-search-link" href="${escapeHtml(searchUrl)}" target="_blank" rel="noopener noreferrer">検索結果を見る</a>
-      </div>
-    `;
+          <span class="star">★</span>
+          <span class="score">${escapeHtml(filmarks.score)}</span>
+        </div>`;
+      if (filmarks.title) {
+        inner += `<span class="match-title">${escapeHtml(filmarks.title)}</span>`;
+      }
+      inner += `</div>`;
+      chip.innerHTML = inner;
 
-    // Prevent U-NEXT's event handlers from swallowing link clicks
-    badge.querySelectorAll("a").forEach((a) => {
-      a.addEventListener("click", (e) => {
-        e.stopPropagation();
-        window.open(a.href, "_blank");
+      chip.addEventListener("click", (e) => {
+        e.preventDefault();
+        console.log("[Ratings] Filmarks click!", movieUrl);
+        chrome.runtime.sendMessage({ type: "OPEN_TAB", url: movieUrl });
       });
-    });
+
+      container.appendChild(chip);
+    }
+
+    // RT chip
+    if (hasRT) {
+      const rtUrl = rt.url || "https://www.rottentomatoes.com";
+      const chip = document.createElement("a");
+      chip.className = "chip";
+      chip.href = rtUrl;
+      chip.target = "_blank";
+      chip.rel = "noopener noreferrer";
+
+      let scoresHtml = "";
+      if (rt.criticsScore) {
+        const icon = parseInt(rt.criticsScore, 10) >= 60 ? "🍅" : "🤢";
+        scoresHtml += `<span class="main-row"><span class="icon">${icon}</span><span class="score rt-critics">${escapeHtml(rt.criticsScore)}%</span></span>`;
+      }
+      if (rt.audienceScore) {
+        scoresHtml += `<span class="main-row"><span class="icon">🍿</span><span class="score rt-audience">${escapeHtml(rt.audienceScore)}%</span></span>`;
+      }
+
+      chip.innerHTML = `<div class="info">
+        <span class="rt-logo">Rotten Tomatoes</span>
+        <div class="rt-scores">${scoresHtml}</div>
+      </div>`;
+
+      chip.addEventListener("click", (e) => {
+        e.preventDefault();
+        console.log("[Ratings] RT click!", rtUrl);
+        chrome.runtime.sendMessage({ type: "OPEN_TAB", url: rtUrl });
+      });
+
+      container.appendChild(chip);
+    }
   }
 
-  function positionBadge(badge, title) {
+  function positionBadge(host, title) {
     const titleEl = findTitleElement(title);
     if (titleEl) {
-      titleEl.insertAdjacentElement("afterend", badge);
+      titleEl.insertAdjacentElement("afterend", host);
       return true;
     }
     return false;
@@ -128,11 +306,10 @@
     const title = getMovieTitleFromDocument();
     if (!title) return;
 
-    const existingBadge = document.getElementById("filmarks-score-badge");
-    if (title === lastTitle && existingBadge) {
-      // Badge exists but might be in wrong position (appended to body initially)
-      if (existingBadge.parentElement === document.body) {
-        positionBadge(existingBadge, title);
+    const existingHost = document.getElementById("unext-ratings-host");
+    if (title === lastTitle && existingHost) {
+      if (existingHost.parentElement === document.body) {
+        positionBadge(existingHost, title);
       }
       return;
     }
@@ -140,35 +317,33 @@
     removeBadge();
     lastTitle = title;
 
-    const badge = createBadge();
-    currentBadge = badge;
+    const host = createBadge();
+    currentHost = host;
 
-    if (!positionBadge(badge, title)) {
-      document.body.appendChild(badge);
+    if (!positionBadge(host, title)) {
+      document.body.appendChild(host);
     }
 
-    console.log("[Filmarks] Searching for:", title);
+    const year = getYearFromPage();
+    console.log("[Ratings] Searching for:", title, "Year:", year);
 
-    // Fetch the score
     chrome.runtime.sendMessage(
-      { type: "FETCH_FILMARKS", title },
+      { type: "FETCH_ALL_SCORES", title, year },
       (response) => {
         if (chrome.runtime.lastError) {
-          console.error("[Filmarks] Runtime error:", chrome.runtime.lastError);
-          updateBadge(badge, { error: "runtime_error" });
+          console.error("[Ratings] Runtime error:", chrome.runtime.lastError);
+          updateBadge(host, { filmarks: { error: "runtime_error" } });
           return;
         }
-        console.log("[Filmarks] Response:", response);
-        updateBadge(badge, response || { error: "no_response" });
+        console.log("[Ratings] Response:", response);
+        updateBadge(host, response || { filmarks: { error: "no_response" } });
       }
     );
   }
 
   function isDetailPage() {
     const url = location.href;
-    // /title/SID... direct page
     if (/video\.unext\.jp\/title\/SID/.test(url)) return true;
-    // ?td=SID... modal overlay
     if (/[?&]td=SID/.test(url)) return true;
     return false;
   }
@@ -182,18 +357,15 @@
     injectBadge();
   }
 
-  // Debounce helper
   let debounceTimer = null;
   function debouncedCheck() {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(checkPage, 500);
   }
 
-  // 1. MutationObserver for DOM changes
   const observer = new MutationObserver(debouncedCheck);
   observer.observe(document.body, { childList: true, subtree: true });
 
-  // 2. Intercept pushState/replaceState for SPA navigation
   const origPushState = history.pushState.bind(history);
   const origReplaceState = history.replaceState.bind(history);
   history.pushState = function (...args) {
@@ -205,10 +377,8 @@
     debouncedCheck();
   };
 
-  // 3. popstate for back/forward navigation
   window.addEventListener("popstate", debouncedCheck);
 
-  // Initial check with delay for SPA rendering
   setTimeout(checkPage, 1000);
   setTimeout(checkPage, 3000);
 })();

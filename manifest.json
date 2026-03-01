@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "U-NEXT Filmarks Score",
+  "name": "U-NEXT Ratings",
   "version": "1.0.0",
-  "description": "U-NEXTの作品詳細ページにFilmarksのスコアを表示します",
+  "description": "U-NEXTの作品詳細ページにレビューサイトのスコアを表示します",
   "permissions": [],
   "host_permissions": [
-    "https://filmarks.com/*"
+    "https://filmarks.com/*",
+    "https://www.rottentomatoes.com/*"
   ],
   "content_scripts": [
     {

@@ -1,12 +1,45 @@
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type === "FETCH_FILMARKS") {
+  if (message.type === "FETCH_ALL_SCORES") {
     (async () => {
-      const result = await fetchFilmarksScore(message.title);
+      const result = await fetchAllScores(message.title, message.year);
       sendResponse(result);
     })();
     return true;
   }
+  if (message.type === "OPEN_TAB") {
+    chrome.tabs.create({ url: message.url });
+  }
 });
+
+// --- Orchestrator ---
+
+async function fetchAllScores(japaneseTitle, unextYear) {
+  console.log("[Ratings] Fetching all scores for:", japaneseTitle, "U-NEXT year:", unextYear);
+
+  // Step 1: Filmarks search
+  const filmarks = await fetchFilmarksScore(japaneseTitle);
+
+  // Step 2: Get English title from Filmarks detail page
+  let englishTitle = null;
+  let year = unextYear || null; // U-NEXT year is primary
+  if (filmarks.url && !filmarks.error) {
+    const detail = await fetchFilmarksDetail(filmarks.url);
+    englishTitle = detail.originalTitle;
+    if (!year) year = detail.year; // Filmarks year as fallback
+    console.log("[Ratings] English title:", englishTitle, "Year:", year);
+  }
+
+  // Step 3: Rotten Tomatoes (if we have an English title)
+  let rt = null;
+  if (englishTitle) {
+    rt = await fetchRTScore(englishTitle, year);
+    console.log("[Ratings] RT result:", rt);
+  }
+
+  return { filmarks, rt, englishTitle };
+}
+
+// --- Filmarks ---
 
 async function fetchFilmarksScore(title) {
   try {
@@ -23,30 +56,16 @@ async function fetchFilmarksScore(title) {
 }
 
 function parseSearchResults(html, queryTitle, searchUrl) {
-  // Filmarks uses Vue.js with this structure:
-  //   @click="onClickDetailLink($event, '/movies/18935')"
-  //   <h3 class="p-content-cassette__title">Movie Title</h3>
-  //   <div class="c-rating__score">3.5</div>
-  //   <img alt="Movie Title" src="https://d2ueuvlup6lbue.cloudfront.net/...">
-
   const results = [];
 
-  // Split HTML by each cassette card
-  const cards = html.split(/class="p-content-cassette"/);
-  // Skip the first segment (before any card)
-  for (let i = 1; i < cards.length; i++) {
-    const card = cards[i];
+  // Match each card: the onClickDetailLink and class="p-content-cassette" are on the same tag
+  // e.g. <div @click="onClickDetailLink($event, '/movies/30973')" class="p-content-cassette">
+  const cardRegex = /onClickDetailLink\(\$event,\s*(?:'|&#39;)(\/movies\/\d+)(?:'|&#39;)\)"\s*class="p-content-cassette">([\s\S]*?)(?=onClickDetailLink\(\$event|$)/g;
+  let cardMatch;
+  while ((cardMatch = cardRegex.exec(html)) !== null) {
+    const moviePath = cardMatch[1];
+    const card = cardMatch[2];
 
-    // Extract movie URL from @click handler
-    // HTML may use &#39; or ' for quotes
-    const urlMatch = card.match(
-      /onClickDetailLink\(\$event,\s*(?:'|&#39;)(\/movies\/\d+)(?:'|&#39;)\)/
-    );
-    // Also try <a href="/movies/..."> as fallback
-    const linkMatch = !urlMatch && card.match(/href="(\/movies\/\d+)"/);
-    const moviePath = urlMatch ? urlMatch[1] : linkMatch ? linkMatch[1] : null;
-
-    // Extract title from <h3 class="p-content-cassette__title">
     const titleMatch = card.match(
       /p-content-cassette__title"[^>]*>([^<]+)<\/h3>/
     );
@@ -54,11 +73,9 @@ function parseSearchResults(html, queryTitle, searchUrl) {
       ? decodeHTMLEntities(titleMatch[1].trim())
       : null;
 
-    // Extract score from <div class="c-rating__score">3.5</div>
     const scoreMatch = card.match(/c-rating__score"[^>]*>(\d\.\d)<\/div>/);
     const score = scoreMatch ? scoreMatch[1] : null;
 
-    // Extract thumbnail
     const thumbMatch = card.match(
       /<img\s[^>]*src="(https:\/\/d2ueuvlup6lbue\.cloudfront\.net\/[^"]+)"[^>]*>/
     );
@@ -68,7 +85,7 @@ function parseSearchResults(html, queryTitle, searchUrl) {
       results.push({
         title: movieTitle,
         score,
-        url: moviePath ? "https://filmarks.com" + moviePath : null,
+        url: "https://filmarks.com" + moviePath,
         thumbnail,
         searchUrl,
       });
@@ -79,22 +96,168 @@ function parseSearchResults(html, queryTitle, searchUrl) {
     return { error: "no_results", searchUrl };
   }
 
-  // Try to find best match by title
+  // Match priority: exact > query-contains-movie > movie-contains-query > first result
   const normalizedQuery = normalize(queryTitle);
-  for (const r of results) {
+  const scored = results.map((r) => {
     const normalizedMovie = normalize(r.title);
-    if (
-      normalizedMovie === normalizedQuery ||
-      normalizedMovie.includes(normalizedQuery) ||
-      normalizedQuery.includes(normalizedMovie)
-    ) {
-      return r;
+    let priority = 0;
+    if (normalizedMovie === normalizedQuery) priority = 3;
+    else if (normalizedQuery.includes(normalizedMovie)) priority = 2;
+    else if (normalizedMovie.includes(normalizedQuery)) priority = 1;
+    return { ...r, priority };
+  });
+  scored.sort((a, b) => b.priority - a.priority);
+  return scored[0];
+}
+
+async function fetchFilmarksDetail(filmarksMovieUrl) {
+  try {
+    const res = await fetch(filmarksMovieUrl);
+    if (!res.ok) return { originalTitle: null, year: null };
+    const html = await res.text();
+
+    // English title: <p class="p-content-detail__original">ENGLISH TITLE</p>
+    const titleMatch = html.match(
+      /class="p-content-detail__original"[^>]*>([^<]+)<\/p>/
+    );
+    const originalTitle = titleMatch
+      ? decodeHTMLEntities(titleMatch[1].trim())
+      : null;
+
+    // Year: "2000年製作の映画" in <h1> or nearby
+    const yearMatch = html.match(/(\d{4})年製作の映画/);
+    const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
+
+    return { originalTitle, year };
+  } catch (e) {
+    console.error("[Ratings] Failed to fetch Filmarks detail:", e);
+    return { originalTitle: null, year: null };
+  }
+}
+
+// --- Rotten Tomatoes ---
+
+async function fetchRTScore(englishTitle, expectedYear) {
+  try {
+    const slug = englishTitle
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, "")
+      .replace(/\s+/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_|_$/g, "");
+
+    // Try multiple URL patterns: base slug, slug_year
+    const candidates = ["https://www.rottentomatoes.com/m/" + slug];
+    if (expectedYear) {
+      candidates.push(
+        "https://www.rottentomatoes.com/m/" + slug + "_" + expectedYear
+      );
     }
+
+    // Strategy 1: Try guessed URLs
+    for (const guessedUrl of candidates) {
+      console.log("[Ratings] Trying RT URL:", guessedUrl);
+      const res = await fetch(guessedUrl);
+      if (res.ok) {
+        const html = await res.text();
+        const result = parseRTPage(html, guessedUrl);
+        if (!result.error && isYearMatch(result.year, expectedYear)) {
+          return result;
+        }
+        // Year mismatch, try next candidate
+        if (!result.error) {
+          console.log(
+            "[Ratings] Year mismatch: RT=" + result.year,
+            "expected=" + expectedYear
+          );
+        }
+      }
+    }
+
+    // Strategy 2: Search RT
+    console.log("[Ratings] Guessed URLs failed, searching RT...");
+    const moviePath = await searchRT(englishTitle);
+    if (!moviePath) return { error: "not_found" };
+
+    const movieUrl = "https://www.rottentomatoes.com" + moviePath;
+    const res = await fetch(movieUrl);
+    if (!res.ok) return { error: "fetch_failed", status: res.status };
+
+    const html = await res.text();
+    const result = parseRTPage(html, movieUrl);
+    if (!result.error && isYearMatch(result.year, expectedYear)) {
+      return result;
+    }
+
+    return result.error ? result : { error: "year_mismatch" };
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+function isYearMatch(rtYear, expectedYear) {
+  if (!expectedYear) return true; // no expected year, accept anything
+  if (!rtYear) return false; // we expect a year but RT page doesn't have one, skip
+  return Math.abs(rtYear - expectedYear) <= 1; // allow 1 year tolerance
+}
+
+function parseRTPage(html, movieUrl) {
+  // RT embeds JSON with score data: "criticsScore":{"score":"89",...}
+  const criticsMatch = html.match(
+    /"criticsScore"\s*:\s*\{[^}]*?"score"\s*:\s*"(\d+)"[^}]*?\}/
+  );
+  const audienceMatch = html.match(
+    /"audienceScore"\s*:\s*\{[^}]*?"score"\s*:\s*"(\d+)"[^}]*?\}/
+  );
+
+  if (!criticsMatch && !audienceMatch) {
+    return { error: "no_scores" };
   }
 
-  // Return first result as fallback
-  return results[0];
+  // Extract year from RT page (e.g. "releaseYear":"2000" or "Released Jan 20, 2000")
+  const yearMatch =
+    html.match(/"releaseYear"\s*:\s*"(\d{4})"/) ||
+    html.match(/"year"\s*:\s*(\d{4})/) ||
+    html.match(/Released\s+\w+\s+\d{1,2},\s+(\d{4})/);
+  const pageYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
+
+  return {
+    criticsScore: criticsMatch ? criticsMatch[1] : null,
+    audienceScore: audienceMatch ? audienceMatch[1] : null,
+    url: movieUrl,
+    year: pageYear,
+  };
 }
+
+async function searchRT(englishTitle) {
+  try {
+    const searchUrl =
+      "https://www.rottentomatoes.com/search?search=" +
+      encodeURIComponent(englishTitle);
+    const res = await fetch(searchUrl);
+    if (!res.ok) return null;
+    const html = await res.text();
+
+    // Look for search-page-media-row elements with movie links
+    const rowRegex =
+      /<search-page-media-row[^>]*>(.*?)<\/search-page-media-row>/gs;
+    let match;
+    while ((match = rowRegex.exec(html)) !== null) {
+      const row = match[1];
+      const urlMatch = row.match(/href="(\/m\/[^"]+)"/);
+      if (urlMatch) return urlMatch[1];
+    }
+
+    // Fallback: any /m/ link
+    const linkMatch = html.match(/href="(\/m\/[^"]+)"/);
+    return linkMatch ? linkMatch[1] : null;
+  } catch (e) {
+    console.error("[Ratings] RT search failed:", e);
+    return null;
+  }
+}
+
+// --- Utilities ---
 
 function decodeHTMLEntities(str) {
   return str

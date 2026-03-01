@@ -1,8 +1,8 @@
-#filmarks-score-badge {
+/* Container */
+#unext-ratings-container {
   display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
+  align-items: stretch;
+  gap: 0;
   margin: 8px 0;
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
   background: rgba(255, 255, 255, 0.08);
@@ -10,12 +10,52 @@
   border-radius: 8px;
 }
 
-#filmarks-score-badge.loading {
+#unext-ratings-container.loading {
   padding: 4px 12px;
 }
 
-/* Main score link */
-#filmarks-score-badge .filmarks-main-link {
+#unext-ratings-container .ratings-loading {
+  font-size: 11px;
+  color: #8b95a5;
+}
+
+/* Rating chip (shared) */
+#unext-ratings-container .rating-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+#unext-ratings-container .rating-chip:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+#unext-ratings-container .rating-chip + .rating-chip {
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Thumbnail */
+#unext-ratings-container .rating-thumb {
+  width: 28px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+/* Info column */
+#unext-ratings-container .rating-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Main link */
+#unext-ratings-container .rating-main-link {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -24,30 +64,30 @@
   transition: opacity 0.2s;
 }
 
-#filmarks-score-badge .filmarks-main-link:hover {
+#unext-ratings-container .rating-main-link:hover {
   opacity: 0.7;
 }
 
-#filmarks-score-badge .filmarks-logo {
-  font-weight: 700;
-  font-size: 11px;
-  color: #f5c518;
-  letter-spacing: 0.5px;
-}
-
-#filmarks-score-badge .filmarks-star {
-  color: #f5c518;
-  font-size: 14px;
-}
-
-#filmarks-score-badge .filmarks-rating {
+/* Score */
+#unext-ratings-container .rating-score {
   font-size: 16px;
   font-weight: 700;
   color: #ffffff;
 }
 
-/* Matched title from Filmarks */
-#filmarks-score-badge .filmarks-match-title {
+/* Star */
+#unext-ratings-container .rating-star {
+  color: #f5c518;
+  font-size: 14px;
+}
+
+/* Icon (emoji) */
+#unext-ratings-container .rating-icon {
+  font-size: 14px;
+}
+
+/* Matched title */
+#unext-ratings-container .rating-match-title {
   font-size: 11px;
   color: #8b95a5;
   max-width: 180px;
@@ -56,36 +96,33 @@
   white-space: nowrap;
 }
 
-/* Search results link */
-#filmarks-score-badge .filmarks-search-link {
-  font-size: 10px;
-  color: #5b9bd5;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-#filmarks-score-badge .filmarks-search-link:hover {
-  text-decoration: underline;
-}
-
-#filmarks-score-badge.loading .filmarks-rating {
+/* --- Filmarks --- */
+#unext-ratings-container .filmarks-logo {
+  font-weight: 700;
   font-size: 11px;
-  color: #8b95a5;
-  font-weight: 400;
+  color: #f5c518;
+  letter-spacing: 0.5px;
 }
 
-/* Thumbnail - smaller for inline */
-#filmarks-score-badge .filmarks-thumb {
-  width: 28px;
-  height: 40px;
-  object-fit: cover;
-  border-radius: 3px;
-  flex-shrink: 0;
+/* --- Rotten Tomatoes --- */
+#unext-ratings-container .rt-logo {
+  font-weight: 700;
+  font-size: 10px;
+  color: #FA320A;
+  letter-spacing: 0.3px;
 }
 
-/* Right side info */
-#filmarks-score-badge .filmarks-info {
+#unext-ratings-container .rt-scores {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 10px;
+}
+
+#unext-ratings-container .rt-critics-score {
+  font-size: 15px;
+}
+
+#unext-ratings-container .rt-audience-score {
+  font-size: 15px;
+  color: #ccc;
 }
