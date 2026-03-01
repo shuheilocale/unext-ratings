@@ -171,24 +171,24 @@ async function fetchRTScore(englishTitle, expectedYear) {
       );
     }
 
-    // Strategy 1: Try guessed URLs
+    // Strategy 1: Try guessed URLs, collect valid results
+    const validResults = [];
     for (const guessedUrl of candidates) {
       console.log("[Ratings] Trying RT URL:", guessedUrl);
       const res = await fetch(guessedUrl);
       if (res.ok) {
         const html = await res.text();
         const result = parseRTPage(html, guessedUrl);
-        if (!result.error && isYearMatch(result.year, expectedYear)) {
-          return result;
-        }
-        // Year mismatch, try next candidate
         if (!result.error) {
-          console.log(
-            "[Ratings] Year mismatch: RT=" + result.year,
-            "expected=" + expectedYear
-          );
+          validResults.push(result);
         }
       }
+    }
+
+    if (validResults.length > 0) {
+      const best = pickClosestYear(validResults, expectedYear);
+      if (best) return best;
+      // All results had wrong years, fall through to search
     }
 
     // Strategy 2: Search RT
@@ -213,9 +213,27 @@ async function fetchRTScore(englishTitle, expectedYear) {
 }
 
 function isYearMatch(rtYear, expectedYear) {
-  if (!expectedYear) return true; // no expected year, accept anything
-  if (!rtYear) return false; // we expect a year but RT page doesn't have one, skip
-  return Math.abs(rtYear - expectedYear) <= 1; // allow 1 year tolerance
+  if (!expectedYear || !rtYear) return true; // missing year info, accept
+  return Math.abs(rtYear - expectedYear) <= 1;
+}
+
+function pickClosestYear(results, expectedYear) {
+  if (!expectedYear) return results[0];
+
+  // Filter out results with clearly wrong years (allow ±3 for JP/US release gap)
+  const compatible = results.filter(
+    (r) => !r.year || Math.abs(r.year - expectedYear) <= 3
+  );
+  if (compatible.length === 0) return null;
+
+  // Sort by year proximity (year data preferred, closest first)
+  compatible.sort((a, b) => {
+    if (!a.year && !b.year) return 0;
+    if (!a.year) return 1;
+    if (!b.year) return -1;
+    return Math.abs(a.year - expectedYear) - Math.abs(b.year - expectedYear);
+  });
+  return compatible[0];
 }
 
 function parseRTPage(html, movieUrl) {
@@ -265,9 +283,8 @@ async function searchRT(englishTitle) {
       if (urlMatch) return urlMatch[1];
     }
 
-    // Fallback: any /m/ link
-    const linkMatch = html.match(/href="(\/m\/[^"]+)"/);
-    return linkMatch ? linkMatch[1] : null;
+    // No results found in search page (likely client-rendered)
+    return null;
   } catch (e) {
     console.error("[Ratings] RT search failed:", e);
     return null;

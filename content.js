@@ -135,7 +135,7 @@
     for (const el of document.querySelectorAll("div, span, p")) {
       const text = el.textContent.trim();
       if (text.length > 30) continue;
-      const m = text.match(/^(\d{4})年/);
+      const m = text.match(/^(\d{4})年\s*[|｜]/);
       if (m) {
         const y = parseInt(m[1], 10);
         if (y >= 1900 && y <= 2099) return y;
